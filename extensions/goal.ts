@@ -15,6 +15,7 @@ import {
 	type GoalDraftingFocus,
 } from "./goal-draft.ts";
 import {
+	formatAuditorActivity,
 	goalAuditorConfigPath,
 	loadGoalAuditorFileConfig,
 	runGoalCompletionAuditor,
@@ -203,6 +204,7 @@ function renderGoalResult(result: { details?: unknown; content: Array<{ type: st
 	}
 	if (
 		firstText.startsWith("Goal audit ")
+		|| firstText.startsWith("Auditor ▸")
 		|| firstText.startsWith("Goal completion rejected")
 		|| firstText.startsWith("Goal complete.")
 		|| firstText.startsWith("Goal paused.")

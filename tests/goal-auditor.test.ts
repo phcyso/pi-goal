@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
 	buildGoalAuditorPrompt,
+	formatAuditorActivity,
 	goalAuditorConfigPath,
 	loadGoalAuditorFileConfig,
 	parseAuditorDecision,
@@ -33,6 +34,29 @@ test("parseAuditorDecision requires explicit approval and lets disapproval win",
 	assert.deepEqual(parseAuditorDecision("Nope\n<disapproved/>"), { approved: false, disapproved: true });
 	assert.deepEqual(parseAuditorDecision("confused <approved/> <disapproved/>"), { approved: false, disapproved: true });
 	assert.deepEqual(parseAuditorDecision("no marker"), { approved: false, disapproved: false });
+});
+
+test("formatAuditorActivity renders a concise live-progress line for each event kind", () => {
+	const readStart = formatAuditorActivity({ kind: "tool_start", toolName: "read", args: { path: "src/parser.ts" } });
+	assert.equal(readStart, "Auditor ▸ read src/parser.ts");
+
+	const grepStart = formatAuditorActivity({ kind: "tool_start", toolName: "grep", args: { pattern: "TODO|FIXME" } });
+	assert.equal(grepStart, "Auditor ▸ grep /TODO|FIXME/");
+
+	const bashStart = formatAuditorActivity({ kind: "tool_start", toolName: "bash", args: { command: "npm\n test" } });
+	assert.equal(bashStart, "Auditor ▸ bash npm test");
+
+	const toolEnd = formatAuditorActivity({ kind: "tool_end", toolName: "read", isError: false });
+	assert.equal(toolEnd, "Auditor ▸ read ✓");
+
+	const toolErr = formatAuditorActivity({ kind: "tool_end", toolName: "bash", isError: true });
+	assert.equal(toolErr, "Auditor ▸ bash (error)");
+
+	const reasoning = formatAuditorActivity({ kind: "assistant_text", text: "The parser handles\nall edge cases." });
+	assert.equal(reasoning, "Auditor ▸ The parser handles");
+
+	const emptyReasoning = formatAuditorActivity({ kind: "assistant_text", text: "   \n  " });
+	assert.equal(emptyReasoning, "Auditor ▸ reasoning…");
 });
 
 test("parseGoalAuditorConfig supports provider/model and thinking_level aliases", () => {
