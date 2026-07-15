@@ -393,19 +393,26 @@ export async function showProposalDialog(
 			let cachedReport: string[] | undefined;
 			let cachedFooter: string[] | undefined;
 
-			function buildReport(safeWidth: number): string[] {
+			function buildReport(width: number): string[] {
+				const indent = 2;
+				const contentWidth = Math.max(10, width - indent - 2);
 				const lines: string[] = [];
 				lines.push(theme.fg("accent", theme.bold(`  ${headerTitle}`)));
-				lines.push(theme.fg("accent", "  " + "─".repeat(safeWidth - 4)));
-				for (const wrapped of wrapTextWithAnsi(theme.fg("text", confirmationText), safeWidth - 4)) {
-					lines.push("  " + wrapped);
+				if (width >= 6) lines.push(theme.fg("accent", "  " + "─".repeat(width - 4)));
+				// Split the multi-line confirmation text and wrap each line
+				// individually so embedded newlines survive the wrapping step.
+				const paragraphs = confirmationText.split("\n");
+				for (const para of paragraphs) {
+					const colored = theme.fg("text", para);
+					const wrapped = wrapTextWithAnsi(colored, contentWidth);
+					for (const w of wrapped) lines.push("  " + w);
 				}
 				return lines;
 			}
 
-			function buildFooter(safeWidth: number): string[] {
+			function buildFooter(width: number): string[] {
 				const lines: string[] = [];
-				lines.push(theme.fg("accent", " " + "─".repeat(safeWidth - 2)));
+				if (width >= 3) lines.push(theme.fg("accent", " " + "─".repeat(width - 2)));
 				for (let i = 0; i < options.length; i++) {
 					const selected = i === optionIndex;
 					const prefix = selected ? theme.fg("accent", " > ") : "   ";
@@ -418,8 +425,9 @@ export async function showProposalDialog(
 			function rebuildCache(width: number): void {
 				lastWidth = width;
 				lastOptionIndex = optionIndex;
-				cachedReport = buildReport(width);
-				cachedFooter = buildFooter(width);
+				const safeWidth = Math.max(20, width);
+				cachedReport = buildReport(safeWidth);
+				cachedFooter = buildFooter(safeWidth);
 			}
 
 			function reportParams(): { reportRows: number; maxOffset: number } {
