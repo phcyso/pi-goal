@@ -364,27 +364,162 @@ export async function runGoalQuestionnaire(ctx: ExtensionContext, rawQuestions: 
 }
 
 /**
- * Confirm a proposed draft through the shared questionnaire UI. Escape / cancel
- * maps to "continue" so the user is never trapped.
+ * Confirm a proposed goal draft through a full-viewport overlay dialog.
+ *
+ * The long draft report is rendered in a scrollable region at the top; the
+ * Confirm / Continue Chatting choices are pinned at the bottom.  This uses
+ * an overlay (not inline editor replacement) so it can never trigger the
+ * TUI's full-redraw path when content overflows the tmux viewport, which
+ * was the cause of the visible flicker on long plans.
+ *
+ * Escape / cancel maps to "continue" so the user is never trapped.
  */
 export async function showProposalDialog(
 	ctx: ExtensionContext,
 	confirmationText: string,
 	focus: GoalDraftingFocus,
 ): Promise<ProposalDecision> {
+	if (!ctx.hasUI) return "confirm"; // headless path handled by caller
+
 	const headerTitle = focus === "sisyphus" ? "Confirm Sisyphus Goal Draft" : "Confirm Goal Draft";
-	const result = await runGoalQuestionnaire(ctx, [{
-		id: "confirm",
-		question: headerTitle,
-		context: confirmationText,
-		options: ["Confirm — create this goal now", "Continue chatting — keep refining"],
-		recommended: 0,
-		allowCustom: false,
-	}]);
-	return proposalDecisionFromQuestionnaireResult({
-		cancelled: result.cancelled,
-		answer: result.answers[0]?.answer,
-	});
+	const options = ["Confirm — create this goal now", "Continue chatting — keep refining"];
+
+	return await ctx.ui.custom<ProposalDecision>(
+		(tui, theme, _kb, done) => {
+			let optionIndex = 0;
+			let scrollOffset = 0;
+			let lastWidth = -1;
+			let lastOptionIndex = -1;
+			let cachedReport: string[] | undefined;
+			let cachedFooter: string[] | undefined;
+
+			function buildReport(safeWidth: number): string[] {
+				const lines: string[] = [];
+				lines.push(theme.fg("accent", theme.bold(`  ${headerTitle}`)));
+				lines.push(theme.fg("accent", "  " + "─".repeat(safeWidth - 4)));
+				for (const wrapped of wrapTextWithAnsi(theme.fg("text", confirmationText), safeWidth - 4)) {
+					lines.push("  " + wrapped);
+				}
+				return lines;
+			}
+
+			function buildFooter(safeWidth: number): string[] {
+				const lines: string[] = [];
+				lines.push(theme.fg("accent", " " + "─".repeat(safeWidth - 2)));
+				for (let i = 0; i < options.length; i++) {
+					const selected = i === optionIndex;
+					const prefix = selected ? theme.fg("accent", " > ") : "   ";
+					lines.push(prefix + theme.fg(selected ? "accent" : "text", options[i]));
+				}
+				lines.push(theme.fg("dim", " ↑↓ select · Enter confirm · Esc continue chatting · j/k/PgUp/PgDn scroll"));
+				return lines;
+			}
+
+			function rebuildCache(width: number): void {
+				lastWidth = width;
+				lastOptionIndex = optionIndex;
+				cachedReport = buildReport(width);
+				cachedFooter = buildFooter(width);
+			}
+
+			function render(width: number): string[] {
+				if (width !== lastWidth || optionIndex !== lastOptionIndex) {
+					rebuildCache(width);
+				}
+				const report = cachedReport ?? [];
+				const footer = cachedFooter ?? [];
+				const height = Math.max(1, tui.terminal.rows);
+
+				// If everything fits in the viewport, no scroll needed.
+				const full = [...report, ...footer];
+				if (full.length <= height) {
+					// Reset scroll state so next resize picks up from top.
+					scrollOffset = 0;
+					return full;
+				}
+
+				// Reserve 1 line for the scroll indicator, render the rest for the report.
+				const reportRows = height - footer.length - 1;
+				if (reportRows <= 0) return full; // shouldn't happen, but bail
+
+				const maxOffset = Math.max(0, report.length - reportRows);
+				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
+
+				const windowLines = report.slice(scrollOffset, scrollOffset + reportRows);
+
+				// Scroll indicator.
+				const above = scrollOffset;
+				const below = maxOffset - scrollOffset;
+				const indicatorParts: string[] = [];
+				if (above > 0) indicatorParts.push(`▲${above}`);
+				if (below > 0) indicatorParts.push(`▼${below}`);
+				const indicator = indicatorParts.length > 0
+					? theme.fg("dim", ` ${indicatorParts.join(" · ")} · j/k scroll · ${report.length} lines`)
+					: theme.fg("dim", ` j/k scroll · ${report.length} lines`);
+
+				return [indicator, ...windowLines, ...footer];
+			}
+
+			function adjustScroll(delta: number, page: boolean): void {
+				// force rebuild so maxOffset is accurate
+				const report = cachedReport ?? [];
+				const footer = cachedFooter ?? [];
+				const height = Math.max(1, tui.terminal.rows);
+				const reportRows = height - footer.length - 1;
+				const maxOffset = Math.max(0, report.length - reportRows);
+				if (page) {
+					scrollOffset = delta > 0
+						? Math.min(maxOffset, scrollOffset + Math.max(1, reportRows))
+						: Math.max(0, scrollOffset - Math.max(1, reportRows));
+				} else {
+					scrollOffset = Math.max(0, Math.min(maxOffset, scrollOffset + delta));
+				}
+				tui.requestRender();
+			}
+
+			function handleInput(data: string): void {
+				if (matchesKey(data, Key.enter)) {
+					done(optionIndex === 0 ? "confirm" : "continue");
+					return;
+				}
+				if (matchesKey(data, Key.escape)) {
+					done("continue");
+					return;
+				}
+				if (matchesKey(data, Key.up)) {
+					optionIndex = Math.max(0, optionIndex - 1);
+					tui.requestRender();
+					return;
+				}
+				if (matchesKey(data, Key.down)) {
+					optionIndex = Math.min(options.length - 1, optionIndex + 1);
+					tui.requestRender();
+					return;
+				}
+				// Scroll keys (only apply when report overflows).
+				if (matchesKey(data, "j")) { adjustScroll(1, false); return; }
+				if (matchesKey(data, "k")) { adjustScroll(-1, false); return; }
+				if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) { adjustScroll(1, true); return; }
+				if (matchesKey(data, Key.pageUp)) { adjustScroll(-1, true); return; }
+				if (matchesKey(data, Key.home)) { scrollOffset = 0; tui.requestRender(); return; }
+				if (matchesKey(data, Key.end)) {
+					const report = cachedReport ?? [];
+					const footer = cachedFooter ?? [];
+					const height = Math.max(1, tui.terminal.rows);
+					const reportRows = height - footer.length - 1;
+					scrollOffset = Math.max(0, report.length - reportRows);
+					tui.requestRender();
+					return;
+				}
+			}
+
+			return { render, invalidate: () => { lastWidth = -1; }, handleInput };
+		},
+		{
+			overlay: true,
+			overlayOptions: { width: "100%", maxHeight: "100%", row: 0, col: 0 },
+		},
+	);
 }
 
 export function registerQuestionnaireTools(pi: ExtensionAPI): void {
