@@ -57,6 +57,13 @@ test("formatAuditorActivity renders a concise live-progress line for each event 
 
 	const emptyReasoning = formatAuditorActivity({ kind: "assistant_text", text: "   \n  " });
 	assert.equal(emptyReasoning, "Auditor ▸ reasoning…");
+
+	// Generic arg extraction: works for any tool without needing a switch case
+	const unknownTool = formatAuditorActivity({ kind: "tool_start", toolName: "stat", args: { path: "package.json" } });
+	assert.equal(unknownTool, "Auditor ▸ stat package.json");
+
+	const noArgs = formatAuditorActivity({ kind: "tool_start", toolName: "ls", args: {} });
+	assert.equal(noArgs, "Auditor ▸ ls");
 });
 
 test("parseGoalAuditorConfig supports provider/model and thinking_level aliases", () => {

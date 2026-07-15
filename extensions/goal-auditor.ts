@@ -56,32 +56,35 @@ export function formatAuditorActivity(event: GoalAuditorProgressEvent): string {
 	}
 }
 
+/** Extract a human-readable detail from tool arguments without hard-coding
+ * tool-specific field names.  Special-cases grep (pattern wrapping) and bash
+ * (whitespace collapse) for nicer display; everything else uses the first
+ * meaningful string argument found.
+ */
 function auditorToolDetail(toolName: string, args: Record<string, unknown> | undefined): string | undefined {
 	if (!args) return undefined;
-	switch (toolName) {
-		case "read": {
-			const value = args.path;
-			return typeof value === "string" ? truncateText(value, 80) : undefined;
-		}
-		case "grep": {
-			const value = args.pattern;
-			return typeof value === "string" ? `/${truncateText(value, 60)}/` : undefined;
-		}
-		case "find": {
-			const value = args.pattern ?? args.path;
-			return typeof value === "string" ? truncateText(value, 60) : undefined;
-		}
-		case "ls": {
-			const value = args.path;
-			return typeof value === "string" ? truncateText(value, 60) : undefined;
-		}
-		case "bash": {
-			const value = args.command;
-			return typeof value === "string" ? truncateText(value.replace(/\s+/g, " "), 80) : undefined;
-		}
-		default:
-			return undefined;
+
+	// grep: wrap the pattern in slashes so it's instantly recognisable
+	if (toolName === "grep") {
+		const pattern = typeof args.pattern === "string" ? args.pattern.trim() : "";
+		if (pattern) return `/${truncateText(pattern, 60)}/`;
 	}
+
+	// bash: collapse whitespace so multi-line commands don't sprawl
+	if (toolName === "bash") {
+		const cmd = typeof args.command === "string" ? args.command.replace(/\s+/g, " ").trim() : "";
+		if (cmd) return truncateText(cmd, 80);
+	}
+
+	// Generic: try common field names first, then fall back to any string value
+	for (const key of ["path", "file_path", "pattern", "glob", "name"]) {
+		const value = args[key];
+		if (typeof value === "string" && value.trim()) return truncateText(value.trim(), 80);
+	}
+	for (const value of Object.values(args)) {
+		if (typeof value === "string" && value.trim()) return truncateText(value.trim(), 80);
+	}
+	return undefined;
 }
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
