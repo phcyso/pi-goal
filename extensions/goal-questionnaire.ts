@@ -422,6 +422,15 @@ export async function showProposalDialog(
 				cachedFooter = buildFooter(width);
 			}
 
+			function reportParams(): { reportRows: number; maxOffset: number } {
+				const report = cachedReport ?? [];
+				const footer = cachedFooter ?? [];
+				const height = Math.max(1, tui.terminal.rows);
+				const reportRows = height - footer.length - 1;
+				const maxOffset = Math.max(0, report.length - Math.max(0, reportRows));
+				return { reportRows, maxOffset };
+			}
+
 			function render(width: number): string[] {
 				if (width !== lastWidth || optionIndex !== lastOptionIndex) {
 					rebuildCache(width);
@@ -439,10 +448,9 @@ export async function showProposalDialog(
 				}
 
 				// Reserve 1 line for the scroll indicator, render the rest for the report.
-				const reportRows = height - footer.length - 1;
+				const { reportRows, maxOffset } = reportParams();
 				if (reportRows <= 0) return full; // shouldn't happen, but bail
 
-				const maxOffset = Math.max(0, report.length - reportRows);
 				scrollOffset = Math.max(0, Math.min(scrollOffset, maxOffset));
 
 				const windowLines = report.slice(scrollOffset, scrollOffset + reportRows);
@@ -461,12 +469,7 @@ export async function showProposalDialog(
 			}
 
 			function adjustScroll(delta: number, page: boolean): void {
-				// force rebuild so maxOffset is accurate
-				const report = cachedReport ?? [];
-				const footer = cachedFooter ?? [];
-				const height = Math.max(1, tui.terminal.rows);
-				const reportRows = height - footer.length - 1;
-				const maxOffset = Math.max(0, report.length - reportRows);
+				const { reportRows, maxOffset } = reportParams();
 				if (page) {
 					scrollOffset = delta > 0
 						? Math.min(maxOffset, scrollOffset + Math.max(1, reportRows))
@@ -502,15 +505,7 @@ export async function showProposalDialog(
 				if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) { adjustScroll(1, true); return; }
 				if (matchesKey(data, Key.pageUp)) { adjustScroll(-1, true); return; }
 				if (matchesKey(data, Key.home)) { scrollOffset = 0; tui.requestRender(); return; }
-				if (matchesKey(data, Key.end)) {
-					const report = cachedReport ?? [];
-					const footer = cachedFooter ?? [];
-					const height = Math.max(1, tui.terminal.rows);
-					const reportRows = height - footer.length - 1;
-					scrollOffset = Math.max(0, report.length - reportRows);
-					tui.requestRender();
-					return;
-				}
+				if (matchesKey(data, Key.end)) { scrollOffset = reportParams().maxOffset; tui.requestRender(); return; }
 			}
 
 			return { render, invalidate: () => { lastWidth = -1; }, handleInput };
